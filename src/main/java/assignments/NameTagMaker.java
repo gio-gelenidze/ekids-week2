@@ -24,5 +24,9 @@ public class NameTagMaker {
 
         System.out.println("==== სერვერზე მოვალთ! ====");
         // დაწერე კოდი აქ
+        for (int i = 0; i < playerNames.length; i++) {
+            String name = playerNames[i];
+            System.out.println("მოგესალმებით სერვერზე, " + name + "! ✨");
+        }
     }
 }

@@ -28,7 +28,15 @@ public class HighScoreFinder {
 
         System.out.println("==== ქულების რეკორდი ====");
         // დაწერე კოდი აქ
-
+        int highestScore = 0;
+        for (int i = 0; i < scores.length; i++) {
+            int score = scores[i];
+            System.out.println("მეგობრის ქულა: " + score);
+            if (score > highestScore) {
+                highestScore = score;
+            }
+        }
         // TODO: ციკლის შემდეგ დაბეჭდა: "ყველაზე მაღალი ქულა: " + highestScore
+        System.out.println("ყველაზე მაღალი ქულა: " + highestScore);
     }
 }

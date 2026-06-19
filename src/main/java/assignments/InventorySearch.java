@@ -23,8 +23,17 @@ public class InventorySearch {
         // ციკლის შიგნით:
         // - დაბეჭდა მიმდინარე ნივთი
         // - თუ ნივთი არის "Key", დაბეჭდა: "გასაღები ნაპოვნია! საიდუმლო კარი იღება... 🗝️"
+        
 
         System.out.println("==== თამაშის ზურგჩანთა ====");
         // დაწერე კოდი აქ
+
+        for (int i = 0; i < backpack.length; i++) {
+            String item = backpack[i];
+            System.out.println("ნივთი: " + item);
+            if (item.equals("Key")) {
+                System.out.println("გასაღები ნაპოვნია! საიდუმლო კარი იღება... 🗝️");
+            }
+        }
     }
 }
