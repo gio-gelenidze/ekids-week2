@@ -1,0 +1,208 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build and run tests
+        run: mvn -B test
+
+      - name: Generate friendly test summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob
+          import html
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          def clean(value):
+              return html.unescape((value or '').strip())
+
+          def extract_actual_output(message):
+              message = clean(message)
+              if not message:
+                  return ''
+              marker = 'Actual output:'
+              if marker in message:
+                  return message.split(marker, 1)[1].strip()
+              return ''
+
+          def extract_expected(message):
+              message = clean(message)
+              if not message:
+                  return ''
+              first_line = message.splitlines()[0].strip()
+              return first_line
+
+          def testcase_title(case):
+              classname = case.attrib.get('classname', 'UnknownClass')
+              name = case.attrib.get('name', 'unknown test')
+              return classname, name
+
+          def get_failure_node(case):
+              failure = case.find('failure')
+              if failure is not None:
+                  return failure
+              return case.find('error')
+
+          def extract_block(text, label):
+              text = clean(text)
+              if not text:
+                  return ''
+              marker = f'{label}:'
+              if marker not in text:
+                  return ''
+              return text.split(marker, 1)[1].strip()
+
+          def testcase_output(case):
+              system_out = clean(case.findtext('system-out', default=''))
+              system_err = clean(case.findtext('system-err', default=''))
+              return system_out, system_err
+
+          files = glob.glob('target/surefire-reports/*.xml') + glob.glob('target/failsafe-reports/*.xml')
+          total_tests = total_failures = total_errors = total_skipped = 0
+          failed_groups = {}
+
+          for f in files:
+              try:
+                  tree = ET.parse(f)
+                  root = tree.getroot()
+                  if root.tag == 'testsuites':
+                      suites = root.findall('.//testsuite')
+                  elif root.tag == 'testsuite':
+                      suites = [root]
+                  else:
+                      suites = []
+
+                  for s in suites:
+                      tests = int(s.attrib.get('tests', 0))
+                      failures = int(s.attrib.get('failures', 0))
+                      errors = int(s.attrib.get('errors', 0))
+                      skipped = int(s.attrib.get('skipped', s.attrib.get('disabled', 0) or 0))
+                      total_tests += tests
+                      total_failures += failures
+                      total_errors += errors
+                      total_skipped += skipped
+
+                      for case in s.findall('testcase'):
+                          classname, name = testcase_title(case)
+                          failure = get_failure_node(case)
+                          if failure is None:
+                              continue
+
+                          failure_message = clean(failure.attrib.get('message', ''))
+                          failure_text = clean(''.join(failure.itertext()))
+                          combined_text = failure_message + '\n' + failure_text if failure_message else failure_text
+                          system_out, system_err = testcase_output(case)
+
+                          item = {
+                              'test': name,
+                              'message': failure_message,
+                              'type': failure.tag,
+                              'actual_output': extract_actual_output(combined_text) or extract_block(failure_text, 'Actual output'),
+                              'expected': extract_expected(combined_text),
+                              'system_out': system_out,
+                              'system_err': system_err,
+                              'trace': failure_text,
+                          }
+                          failed_groups.setdefault(classname, []).append(item)
+              except Exception as e:
+                  print(f'Warning: could not parse {f}: {e}', file=sys.stderr)
+
+          total_failed = total_failures + total_errors
+          total_passed = total_tests - total_failed - total_skipped
+
+          summary_lines = []
+          summary_lines.append('# Test Summary')
+          summary_lines.append('')
+
+          if total_tests == 0:
+              summary_lines.append("Hmm — I couldn't find any test results. Did the build finish correctly?")
+          elif total_failed == 0:
+              if total_passed > 0:
+                  summary_lines.append('Great job! All tests passed 🎉')
+              else:
+                  summary_lines.append('No tests ran, but the build completed.')
+          else:
+              summary_lines.append(f'We ran the tests — {total_passed} passed, {total_failed} failed, {total_skipped} skipped.')
+              summary_lines.append('')
+              summary_lines.append('## What needs fixing')
+
+              for classname in sorted(failed_groups.keys()):
+                  items = failed_groups[classname]
+                  summary_lines.append(f'### {classname} — {len(items)} problem(s)')
+                  for item in items:
+                      summary_lines.append(f'- **{item["test"]}**')
+                      if item['message']:
+                          summary_lines.append(f'  - Message: {item["message"]}')
+                      if item['expected']:
+                          summary_lines.append(f'  - Expected: {item["expected"]}')
+                      if item['actual_output']:
+                          summary_lines.append('  - Actual output:')
+                          summary_lines.append('')
+                          summary_lines.append('```text')
+                          summary_lines.append(item['actual_output'])
+                          summary_lines.append('```')
+                          summary_lines.append('')
+                      elif item['system_out']:
+                          summary_lines.append('  - Captured output:')
+                          summary_lines.append('')
+                          summary_lines.append('```text')
+                          summary_lines.append(item['system_out'])
+                          summary_lines.append('```')
+                          summary_lines.append('')
+                      if item['system_err']:
+                          summary_lines.append('  - Error output:')
+                          summary_lines.append('')
+                          summary_lines.append('```text')
+                          summary_lines.append(item['system_err'])
+                          summary_lines.append('```')
+                          summary_lines.append('')
+                      elif item['trace'] and not item['system_out']:
+                          summary_lines.append('  - Details:')
+                          summary_lines.append('')
+                          summary_lines.append('```text')
+                          summary_lines.append(item['trace'])
+                          summary_lines.append('```')
+                          summary_lines.append('')
+
+          summary_lines.append('')
+          summary_lines.append('---')
+          summary_lines.append(f'- Total tests: {total_tests}')
+          summary_lines.append(f'- Passed: {total_passed}')
+          summary_lines.append(f'- Failed: {total_failed} (failures: {total_failures}, errors: {total_errors})')
+          summary_lines.append(f'- Skipped: {total_skipped}')
+          summary_lines.append('')
+          summary_text = '\n'.join(summary_lines) + '\n'
+
+          # Append to the GitHub Actions step summary (if available)
+          gh_summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if gh_summary:
+              try:
+                  with open(gh_summary, 'a', encoding='utf-8') as fh:
+                      fh.write(summary_text)
+              except Exception as e:
+                  print(f'Could not write to GITHUB_STEP_SUMMARY: {e}', file=sys.stderr)
+
+          # Always print the summary to the job logs as well
+          print(summary_text)
+          PY
